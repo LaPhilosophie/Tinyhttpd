@@ -54,7 +54,7 @@ void unimplemented(int);
 /**********************************************************************/
 void accept_request(void *arg)
 {
-    int client = (intptr_t)arg;
+    int client = (intptr_t)arg;//客户端连接的套接字
     char buf[1024];
     size_t numchars;
     char method[255];
@@ -65,7 +65,10 @@ void accept_request(void *arg)
     int cgi = 0;      /* becomes true if server decides this is a CGI
                        * program */
     char *query_string = NULL;
-
+    /*
+   
+    getline函数每次读取一行
+    */
     numchars = get_line(client, buf, sizeof(buf));
     i = 0; j = 0;
     while (!ISspace(buf[i]) && (i < sizeof(method) - 1))
@@ -74,63 +77,64 @@ void accept_request(void *arg)
         i++;
     }
     j=i;
-    method[i] = '\0';
+    method[i] = '\0';//获取method字符串成功，手动加上\0
 
-    if (strcasecmp(method, "GET") && strcasecmp(method, "POST"))
+    if (strcasecmp(method, "GET") && strcasecmp(method, "POST"))//将method字符串与GET、POST比较
     {
         unimplemented(client);
         return;
     }
 
-    if (strcasecmp(method, "POST") == 0)
+    if (strcasecmp(method, "POST") == 0)//如果是post把CGI标志置为1，表示要运行CGI程序
         cgi = 1;
 
     i = 0;
     while (ISspace(buf[j]) && (j < numchars))
-        j++;
+        j++;//j后移  吞掉空格
     while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < numchars))
     {
-        url[i] = buf[j];
+        url[i] = buf[j];//将buf的内容复制到url中
         i++; j++;
     }
     url[i] = '\0';
 
-    if (strcasecmp(method, "GET") == 0)
+    if (strcasecmp(method, "GET") == 0)//如果是get请求
     {
-        query_string = url;
-        while ((*query_string != '?') && (*query_string != '\0'))
+        query_string = url;//query_string是一个指向char类型的指针，把url的地址赋给它
+        while ((*query_string != '?') && (*query_string != '\0'))//当没有到终点或者没有发现？，就一直往后移动
             query_string++;
-        if (*query_string == '?')
+        //这个时候停下来了
+        if (*query_string == '?')//判断是不是？
         {
-            cgi = 1;
-            *query_string = '\0';
-            query_string++;
+            cgi = 1;//如果是？那么说明get请求中有参数存在
+            *query_string = '\0';//把？替换为\0
+            query_string++;//指针往后移一位
         }
     }
 
-    sprintf(path, "htdocs%s", url);
-    if (path[strlen(path) - 1] == '/')
+    sprintf(path, "htdocs%s", url);//给path变量赋值，程序默认为根目录是在htdocs下
+    if (path[strlen(path) - 1] == '/')//如果以/结尾，说明是一个目录，那么加上index.html
         strcat(path, "index.html");
-    if (stat(path, &st) == -1) {
+    if (stat(path, &st) == -1) {//文件不存在
         while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
             numchars = get_line(client, buf, sizeof(buf));
         not_found(client);
     }
     else
     {
-        if ((st.st_mode & S_IFMT) == S_IFDIR)
+        if ((st.st_mode & S_IFMT) == S_IFDIR)//如果是目录，加上/index.html
             strcat(path, "/index.html");
         if ((st.st_mode & S_IXUSR) ||
                 (st.st_mode & S_IXGRP) ||
                 (st.st_mode & S_IXOTH)    )
-            cgi = 1;
+            cgi = 1;//如果文件可执行
         if (!cgi)
-            serve_file(client, path);
+            serve_file(client, path);//直接向client传送文件
         else
-            execute_cgi(client, path, method, query_string);
+            execute_cgi(client, path, method, query_string);//执行cgi脚本
     }
 
-    close(client);
+    close(client);//关闭客户端到服务器的连接
 }
 
 /**********************************************************************/
@@ -229,9 +233,9 @@ void execute_cgi(int client, const char *path,
         numchars = get_line(client, buf, sizeof(buf));
         while ((numchars > 0) && strcmp("\n", buf))
         {
-            buf[15] = '\0';
+            buf[15] = '\0';//手动加上\0，下面进行字符串比较
             if (strcasecmp(buf, "Content-Length:") == 0)
-                content_length = atoi(&(buf[16]));
+                content_length = atoi(&(buf[16]));//得到content_length字段的值
             numchars = get_line(client, buf, sizeof(buf));
         }
         if (content_length == -1) {
@@ -243,9 +247,9 @@ void execute_cgi(int client, const char *path,
     {
     }
 
-
-    if (pipe(cgi_output) < 0) {
-        cannot_execute(client);
+    //pipe()函数会建立管道，并将文件描述词由参数filedes数组返回，两个文件描述符分别对应管道的两端，filedes[0]为读端，filedes[1]为写端
+    if (pipe(cgi_output) < 0) {	
+        cannot_execute(client);//错误处理，若成功则返回零，否则返回-1，错误原因存于errno中
         return;
     }
     if (pipe(cgi_input) < 0) {
@@ -253,7 +257,7 @@ void execute_cgi(int client, const char *path,
         return;
     }
 
-    if ( (pid = fork()) < 0 ) {
+    if ( (pid = fork()) < 0 ) {//fork进程
         cannot_execute(client);
         return;
     }
@@ -265,36 +269,36 @@ void execute_cgi(int client, const char *path,
         char query_env[255];
         char length_env[255];
 
-        dup2(cgi_output[1], STDOUT);
-        dup2(cgi_input[0], STDIN);
+        dup2(cgi_output[1], STDOUT);//将标准输出重定向到cgi_output[1]
+        dup2(cgi_input[0], STDIN);//将标准输入重定向到cgi_input[0]
         close(cgi_output[0]);
         close(cgi_input[1]);
-        sprintf(meth_env, "REQUEST_METHOD=%s", method);
-        putenv(meth_env);
+        sprintf(meth_env, "REQUEST_METHOD=%s", method);//给method的环境变量赋值
+        putenv(meth_env);//将method的环境变量加到env
         if (strcasecmp(method, "GET") == 0) {
-            sprintf(query_env, "QUERY_STRING=%s", query_string);
-            putenv(query_env);
+            sprintf(query_env, "QUERY_STRING=%s", query_string);//给query_env赋值
+            putenv(query_env);//放到环境变量
         }
         else {   /* POST */
-            sprintf(length_env, "CONTENT_LENGTH=%d", content_length);
+            sprintf(length_env, "CONTENT_LENGTH=%d", content_length);//给length_env赋值
             putenv(length_env);
         }
-        execl(path, NULL);
-        exit(0);
+        execl(path, NULL);//execl()用来执行参数path字符串所代表的文件路径，这里是执行cgi脚本
+        exit(0);//如果执行成功则函数不会返回，该行不会执行
     } else {    /* parent */
         close(cgi_output[1]);
         close(cgi_input[0]);
         if (strcasecmp(method, "POST") == 0)
             for (i = 0; i < content_length; i++) {
-                recv(client, &c, 1, 0);
-                write(cgi_input[1], &c, 1);
+                recv(client, &c, 1, 0);//读
+                write(cgi_input[1], &c, 1);//通过管道写
             }
-        while (read(cgi_output[0], &c, 1) > 0)
-            send(client, &c, 1, 0);
-
+        while (read(cgi_output[0], &c, 1) > 0)//读取子进程写入的信息到c
+            send(client, &c, 1, 0);//发送c到客户端
+        //关闭管道
         close(cgi_output[0]);
         close(cgi_input[1]);
-        waitpid(pid, &status, 0);
+        waitpid(pid, &status, 0);//等待子进程返回
     }
 }
 
@@ -405,15 +409,15 @@ void serve_file(int client, const char *filename)
 
     buf[0] = 'A'; buf[1] = '\0';
     while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
-        numchars = get_line(client, buf, sizeof(buf));
+        numchars = get_line(client, buf, sizeof(buf));//读取剩下的所有http数据，并丢弃
 
     resource = fopen(filename, "r");
     if (resource == NULL)
         not_found(client);
     else
     {
-        headers(client, filename);
-        cat(client, resource);
+        headers(client, filename);//发送头部
+        cat(client, resource);//发送文件数据
     }
     fclose(resource);
 }
@@ -436,23 +440,23 @@ int startup(u_short *port)
     if (httpd == -1)
         error_die("socket");
     memset(&name, 0, sizeof(name));
-    name.sin_family = AF_INET;
-    name.sin_port = htons(*port);
-    name.sin_addr.s_addr = htonl(INADDR_ANY);
-    if ((setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) < 0)  
+    name.sin_family = AF_INET;//仅适用于 IPv4 的 Internet 系列，INADDR_ANY是个特殊的ip地址，表示主机所有网络接口都可以接受请求
+    name.sin_port = htons(*port);//htons函数将short integer类型的port由主机字节序转化为网络字节序
+    name.sin_addr.s_addr = htonl(INADDR_ANY);//htonl函数将unsigned integer类型的port由主机字节序转化为网络字节序
+    if ((setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) < 0)  //设置套接字，允许地址重用，否则可能会报错bind failed: Address already in use；处于 TIME_WAIT 状态的端口不会立即被释放
     {  
         error_die("setsockopt failed");
     }
-    if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)
+    if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)//绑定套接字
         error_die("bind");
-    if (*port == 0)  /* if dynamically allocating a port */
+    if (*port == 0)  /* if dynamically allocating a port */ //套接字有可能被绑定一个临时分配的端口，而你不知道它的值
     {
         socklen_t namelen = sizeof(name);
-        if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1)
+        if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1)//getsockname函数通常用于在套接字隐式绑定到端口之后查找分配给套接字的端口
             error_die("getsockname");
         *port = ntohs(name.sin_port);
     }
-    if (listen(httpd, 5) < 0)
+    if (listen(httpd, 5) < 0)//httpd套接字开始监听，请求队列的长度为5
         error_die("listen");
     return(httpd);
 }
@@ -488,22 +492,22 @@ void unimplemented(int client)
 
 int main(void)
 {
-    int server_sock = -1;
-    u_short port = 4000;
-    int client_sock = -1;
+    int server_sock = -1;//服务器端的主监听套接字
+    u_short port = 4000;//监听套接字绑定的端口
+    int client_sock = -1;//与客户端进行通信的套接字
     struct sockaddr_in client_name;
     socklen_t  client_name_len = sizeof(client_name);
     pthread_t newthread;
 
-    server_sock = startup(&port);
+    server_sock = startup(&port);//绑定服务器的监听套接字
     printf("httpd running on port %d\n", port);
 
     while (1)
     {
         client_sock = accept(server_sock,
                 (struct sockaddr *)&client_name,
-                &client_name_len);
-        if (client_sock == -1)
+                &client_name_len);//阻塞等待客户端连接
+        if (client_sock == -1)//错误处理
             error_die("accept");
         /* accept_request(&client_sock); */
         if (pthread_create(&newthread , NULL, (void *)accept_request, (void *)(intptr_t)client_sock) != 0)
