@@ -284,7 +284,7 @@ void execute_cgi(int client, const char *path,
             putenv(length_env);
         }
         execl(path, NULL);//execl()用来执行参数path字符串所代表的文件路径，这里是执行cgi脚本
-        exit(0);//如果执行成功则函数不会返回，该行不会执行
+        exit(0);//如果execl函数执行成功则函数不会返回，该行不会执行
     } else {    /* parent */
         close(cgi_output[1]);
         close(cgi_input[0]);

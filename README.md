@@ -1,101 +1,71 @@
-A mirror for tinyhttpd(Tinyhttpd非官方镜像,Fork自[sourceForge](https://sourceforge.net/projects/tiny-httpd/),仅供学习)
 
-测试CGI时需要本机安装PERL，同时安装perl-cgi
+# 函数调用分析
+- main函数调用了start函数进行服务器端的监听套接字绑定
+  - start函数包含了套接字的创建、设置、绑定等，牵扯到网络编程的一些知识点，比如sockaddr_in结构体、bind函数等
+- 主函数进入死循环，使用accept函数阻塞等待客户端的网络连接请求
+- 使用pthread_creat函数创建线程
+- accept_request函数判断http请求是post还是get，从而决定是直接向client传送文件还是执行cgi脚本
+- execute_cgi函数是该项目的精髓，包含了匿名管道、进程间通信、fork进程、环境变量等知识
+- **对代码的注释的repository：** https://github.com/LaPhilosophie/Tinyhttpd
 
-### Prepare 
-Compile for Linux
+# 一些分析图
+![函数调用链分析](https://gls.show/image/Snipaste_2022-08-23_23-22-55.png)
+
+![管道的分析图](https://gls.show/image/tinyhttpd-work-flow1.png)
+
+# 网络编程与套接字
+- 套接字A用于监听和接受客户端请求，绑定监听的ip地址和端口，阻塞等待客户端连接请求
+- 如果套接字A接收到了客户端的连接请求，那么服务器会创建出新的套接字B，用于和客户端的通信，而之前的监听套接字A继续监听，如果有别的来自客户端的连接请求，那么会继续创建出和客户端通信的套接字C、D、E...
+- 服务器与客户端的通信模型图：
+
+![](https://docs.oracle.com/cd/E38902_01/html/E38880/figures/7099.png)
+
+# 进程相关知识
+
 ```
- To compile for Linux:
-  1) Comment out the #include <pthread.h> line.
-  2) Comment out the line that defines the variable newthread.
-  3) Comment out the two lines that run pthread_create().
-  4) Uncomment the line that runs accept_request().
-  5) Remove -lsocket from the Makefile.
+int pthread_create(pthread_t *thread,
+                   const pthread_attr_t *attr,
+                   void *(*start_routine) (void *),
+                   void *arg);
+
+```
+上述函数的四个参数分别为：
+- 线程的地址
+- 手动设置新建线程的属性，若为NULL，那么会采用系统的默认属性值设置线程属性
+- 以函数指针的方式指明新建线程需要执行的函数，形参和返回值的类型都必须为 void* 类型
+- arg是函数的参数
+
+线程创建成功时返回0，失败为非0
+
+# http协议请求头格式
+```
+{method} {path} {http_version}(CRLF)
+{header_name}: {header_value}(CRLF)
+...more header info(CRLF)
+(CRLF)
+{content}
+```
+第一行（消息行）包含 HTTP 方法和目标，例：
+```
+GET /mysite/mydirectory/index.html HTTP/1.1\r\n
+```
+格式中的变量说明
+```
+method: GET,POST,PUT,DELETE 等等
+path: URL路径部分，如：/index.html
+version：如：http/1.1
+header_name: 如：Host
+header_value: 如： www.xxx.com
 ```
 
-<p>&nbsp; &nbsp; &nbsp;每个函数的作用：</p>
-<p>&nbsp; &nbsp; &nbsp;accept_request: &nbsp;处理从套接字上监听到的一个 HTTP 请求，在这里可以很大一部分地体现服务器处理请求流程。</p>
-<p>&nbsp; &nbsp; &nbsp;bad_request: 返回给客户端这是个错误请求，HTTP 状态吗 400 BAD REQUEST.</p>
-<p>&nbsp; &nbsp; &nbsp;cat: 读取服务器上某个文件写到 socket 套接字。</p>
-<p>&nbsp; &nbsp; &nbsp;cannot_execute: 主要处理发生在执行 cgi 程序时出现的错误。</p>
-<p>&nbsp; &nbsp; &nbsp;error_die: 把错误信息写到 perror 并退出。</p>
-<p>&nbsp; &nbsp; &nbsp;execute_cgi: 运行 cgi 程序的处理，也是个主要函数。</p>
-<p>&nbsp; &nbsp; &nbsp;get_line: 读取套接字的一行，把回车换行等情况都统一为换行符结束。</p>
-<p>&nbsp; &nbsp; &nbsp;headers: 把 HTTP 响应的头部写到套接字。</p>
-<p>&nbsp; &nbsp; &nbsp;not_found: 主要处理找不到请求的文件时的情况。</p>
-<p>&nbsp; &nbsp; &nbsp;sever_file: 调用 cat 把服务器文件返回给浏览器。</p>
-<p>&nbsp; &nbsp; &nbsp;startup: 初始化 httpd 服务，包括建立套接字，绑定端口，进行监听等。</p>
-<p>&nbsp; &nbsp; &nbsp;unimplemented: 返回给浏览器表明收到的 HTTP 请求所用的 method 不被支持。</p>
-<p><br>
-</p>
-<p>&nbsp; &nbsp; &nbsp;建议源码阅读顺序： main -&gt; startup -&gt; accept_request -&gt; execute_cgi, 通晓主要工作流程后再仔细把每个函数的源码看一看。</p>
-<p><br>
-</p>
-<h4>&nbsp; &nbsp; &nbsp;工作流程</h4>
-<p>&nbsp; &nbsp; &nbsp;（1） 服务器启动，在指定端口或随机选取端口绑定 httpd 服务。</p>
-<p>&nbsp; &nbsp; &nbsp;（2）收到一个 HTTP 请求时（其实就是 listen 的端口 accpet 的时候），派生一个线程运行 accept_request 函数。</p>
-<p>&nbsp; &nbsp; &nbsp;（3）取出 HTTP 请求中的 method (GET 或 POST) 和 url,。对于 GET 方法，如果有携带参数，则 query_string 指针指向 url 中 ？ 后面的 GET 参数。</p>
-<p>&nbsp; &nbsp; &nbsp;（4） &#26684;式化 url 到 path 数组，表示浏览器请求的服务器文件路径，在 tinyhttpd 中服务器文件是在 htdocs 文件夹下。当 url 以 / 结尾，或 url 是个目录，则默认在 path 中加上 index.html，表示访问主页。</p>
-<p>&nbsp; &nbsp; &nbsp;（5）如果文件路径合法，对于无参数的 GET 请求，直接输出服务器文件到浏览器，即用 HTTP &#26684;式写到套接字上，跳到（10）。其他情况（带参数 GET，POST 方式，url 为可执行文件），则调用 excute_cgi 函数执行 cgi 脚本。</p>
-<p>&nbsp; &nbsp; （6）读取整个 HTTP 请求并丢弃，如果是 POST 则找出 Content-Length. 把 HTTP 200 &nbsp;状态码写到套接字。</p>
-<p>&nbsp; &nbsp; （7） 建立两个管道，cgi_input 和 cgi_output, 并 fork 一个进程。</p>
-<p>&nbsp; &nbsp; （8） 在子进程中，把 STDOUT 重定向到 cgi_outputt 的写入端，把 STDIN 重定向到 cgi_input 的读取端，关闭 cgi_input 的写入端 和 cgi_output 的读取端，设置 request_method 的环境变量，GET 的话设置 query_string 的环境变量，POST 的话设置 content_length 的环境变量，这些环境变量都是为了给 cgi 脚本调用，接着用 execl 运行 cgi 程序。</p>
-<p>&nbsp; &nbsp; （9） 在父进程中，关闭 cgi_input 的读取端 和 cgi_output 的写入端，如果 POST 的话，把 POST 数据写入 cgi_input，已被重定向到 STDIN，读取 cgi_output 的管道输出到客户端，该管道输入是 STDOUT。接着关闭所有管道，等待子进程结束。这一部分比较乱，见下图说明：</p>
-<p><br>
-</p>
-<p><img src="http://img.blog.csdn.net/20141226173222750?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvamNqYzkxOA==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center" width="484" height="222" alt=""><br>
-</p>
-<p>图 1 &nbsp; &nbsp;管道初始状态</p>
-<p><br>
-</p>
-<p><img src="http://img.blog.csdn.net/20141226161119981?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvamNqYzkxOA==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center" alt=""></p>
-<p> 图 2 &nbsp;管道最终状态&nbsp;</p>
-<p><br>
-</p>
-<p>&nbsp; &nbsp; （10） 关闭与浏览器的连接，完成了一次 HTTP 请求与回应，因为 HTTP 是无连接的。</p>
-<p><br>
-</p>
+# 抓包
+可以通过chrome浏览器调试，先后顺序分别为：f12、network、preserve log、name、header
 
-以下内容来自源作者:
 
-  This software is copyright 1999 by J. David Blackstone.  Permission
-is granted to redistribute and modify this software under the terms of
-the GNU General Public License, available at http://www.gnu.org/ .
+# 参考
+- https://blog.csdn.net/wenqian1991/article/details/46011357
+- https://phenix3443.github.io/notebook/c/tinyhttpd-analysis.html
+![](/image/tinyhttpd-work-flow.png)
 
-  If you use this software or examine the code, I would appreciate
-knowing and would be overjoyed to hear about it at
-jdavidb@sourceforge.net .
 
-  This software is not production quality.  It comes with no warranty
-of any kind, not even an implied warranty of fitness for a particular
-purpose.  I am not responsible for the damage that will likely result
-if you use this software on your computer system.
-
-  I wrote this webserver for an assignment in my networking class in
-1999.  We were told that at a bare minimum the server had to serve
-pages, and told that we would get extra credit for doing "extras."
-Perl had introduced me to a whole lot of UNIX functionality (I learned
-sockets and fork from Perl!), and O'Reilly's lion book on UNIX system
-calls plus O'Reilly's books on CGI and writing web clients in Perl got
-me thinking and I realized I could make my webserver support CGI with
-little trouble.
-
-  Now, if you're a member of the Apache core group, you might not be
-impressed.  But my professor was blown over.  Try the color.cgi sample
-script and type in "chartreuse."  Made me seem smarter than I am, at
-any rate. :)
-
-  Apache it's not.  But I do hope that this program is a good
-educational tool for those interested in http/socket programming, as
-well as UNIX system calls.  (There's some textbook uses of pipes,
-environment variables, forks, and so on.)
-
-  One last thing: if you look at my webserver or (are you out of
-mind?!?) use it, I would just be overjoyed to hear about it.  Please
-email me.  I probably won't really be releasing major updates, but if
-I help you learn something, I'd love to know!
-
-  Happy hacking!
-
-                                   J. David Blackstone
-
+![](/image/20150527211620041.png)
